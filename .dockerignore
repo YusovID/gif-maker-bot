@@ -1,0 +1,13 @@
+# Git
+.git
+.gitignore
+
+# Документация
+*.md
+
+# Конфигурация и окружение
+*.env*
+
+# IDE
+.idea/
+.vscode/

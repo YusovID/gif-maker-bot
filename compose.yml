@@ -1,0 +1,10 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: ./cmd/gif-maker/Dockerfile
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - 8080:8080
