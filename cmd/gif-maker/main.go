@@ -1,42 +1,36 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
+	"os/signal"
+	"sync"
+	"syscall"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/YusovID/gif-maker-bot/internal/bot"
 )
 
 func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill, syscall.SIGTERM)
+	defer stop()
+
 	token := os.Getenv("BOT_TOKEN")
 	if token == "" {
-		log.Fatal("BOT_TOKEN is not set\n")
+		log.Fatalf("BOT_TOKEN is not set\n")
 	}
 
-	bot, err := tgbotapi.NewBotAPI(token)
+	b, err := bot.NewBot(ctx, token)
 	if err != nil {
-		log.Panic(err)
+		log.Fatalf("bot initialization failed: %v\n", err)
 	}
 
-	bot.Debug = true
+	wg := &sync.WaitGroup{}
+	wg.Go(func() { b.Run() })
 
-	log.Printf("Authorized on account %s", bot.Self.UserName)
+	<-ctx.Done()
 
-	u := tgbotapi.NewUpdate(0)
-	u.Timeout = 60
+	wg.Wait()
 
-	updates := bot.GetUpdatesChan(u)
-
-	for update := range updates {
-		if update.Message != nil {
-			log.Printf("[%s] %s", update.Message.From.UserName, update.Message.Text)
-
-			msg := tgbotapi.NewMessage(update.Message.Chat.ID, update.Message.Text)
-			msg.ReplyToMessageID = update.Message.MessageID
-
-			if _, err := bot.Send(msg); err != nil {
-				log.Printf("ERROR: message sending failed: %v\n", err)
-			}
-		}
-	}
+	log.Println("stopping bot")
 }
