@@ -11,3 +11,7 @@
 # IDE
 .idea/
 .vscode/
+
+telegram-bot-api/
+*.cover
+project.*
