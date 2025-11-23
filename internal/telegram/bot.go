@@ -99,7 +99,7 @@ func (b *Bot) Process() {
 			}
 
 			go func() {
-				b.sem<-struct{}{}
+				b.sem <- struct{}{}
 
 				defer func() { <-b.sem }()
 
