@@ -1,0 +1,214 @@
+version: '3'
+
+# ==============================================================================
+# CONFIGURATION
+# ==============================================================================
+vars:
+  APP_NAME: gif-maker-bot
+  COMPOSE_FILE: compose.yml
+
+  # Конфигурация для сборки TDLib API
+  TG_API_REPO_DIR: telegram-bot-api
+  TG_API_BIN_FILE: tg-bot-server
+
+  # Настройки компилятора Clang (для Ubuntu 24.04)
+  CLANG_CC: /usr/bin/clang-18
+  CLANG_CXX: /usr/bin/clang++-18
+  CMAKE_ARGS: -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX:PATH=/usr/local
+
+  # Инструменты
+  COMPOSE: docker compose -f {{.COMPOSE_FILE}}
+  GOLANGCI_LINT: go run github.com/golangci/golangci-lint/cmd/golangci-lint
+
+# ==============================================================================
+# ЗАДАЧИ
+# ==============================================================================
+tasks:
+
+  # ----------------------------------------------------------------------------
+  # GENERAL COMMANDS
+  # ----------------------------------------------------------------------------
+  default:
+    cmds:
+      - task: help
+    silent: true
+
+  help:
+    desc: Показать этот список команд и их описания
+    cmds:
+      - task --list-all
+
+  all:
+    desc: Запустить форматирование, линтер и тесты
+    cmds:
+      - task: go:fmt
+      - task: go:lint
+      - task: go:test
+
+  # ----------------------------------------------------------------------------
+  # DOCKER COMPOSE MANAGEMENT
+  # ----------------------------------------------------------------------------
+  docker:build:
+    desc: Собрать или пересобрать образы сервисов
+    cmds:
+      - echo "Building service images..."
+      - '{{.COMPOSE}} build'
+
+  docker:up:
+    desc: Собрать образы и запустить сервисы в фоне
+    deps: [docker:down, docker:build]
+    cmds:
+      - echo "Starting services..."
+      - '{{.COMPOSE}} up -d'
+
+  docker:start:
+    desc: Запустить ранее остановленные контейнеры
+    cmds:
+      - echo "Starting existing containers..."
+      - '{{.COMPOSE}} start'
+
+  docker:stop:
+    desc: Остановить запущенные сервисы
+    cmds:
+      - echo "Stopping services..."
+      - '{{.COMPOSE}} stop'
+
+  docker:restart:
+    desc: Перезапустить сервисы
+    cmds:
+      - task: docker:stop
+      - task: docker:start
+
+  docker:down:
+    desc: Остановить и удалить контейнеры/сети (тома сохраняются)
+    cmds:
+      - echo "Tearing down services..."
+      - '{{.COMPOSE}} down --remove-orphans'
+
+  docker:nuke:
+    desc: ВНИМАНИЕ!!! Полностью удалить всё (контейнеры, сети, ТОМА)
+    cmds:
+      - echo "Nuking the entire environment (containers, networks, VOLUMES)..."
+      - '{{.COMPOSE}} down -v --remove-orphans'
+
+  docker:logs:
+    desc: Показать логи всех сервисов в реальном времени
+    cmds:
+      - '{{.COMPOSE}} logs -f'
+
+  docker:ps:
+    desc: Показать статус запущенных контейнеров
+    cmds:
+      - '{{.COMPOSE}} ps'
+
+  # ----------------------------------------------------------------------------
+  # TDLib API BUILD (Сборка C++)
+  # ----------------------------------------------------------------------------
+  tg-api:tools:
+    desc: Установить все зависимости (clang/cmake) для сборки TDLib API (требует sudo)
+    cmds:
+      - echo "Installing dependencies for TDLib API build (requires sudo)..."
+      - sudo apt update
+      - sudo apt upgrade -y
+      - sudo apt install -y make git zlib1g-dev libssl-dev gperf cmake clang-18 libc++-18-dev libc++abi-18-dev
+
+  tg-api:build:
+    desc: Собрать бинарник Telegram Bot API Server (используя Clang)
+    deps: [tg-api:tools]
+    cmds:
+      - echo "Building Telegram Bot API Server using Clang-18 and libc++..."
+
+      - cmd: |
+          if [ ! -d {{.TG_API_REPO_DIR}} ]; then
+            echo "Cloning repository...";
+            git clone --recursive https://github.com/tdlib/telegram-bot-api.git;
+          fi
+
+      - echo "Preparing build directory..."
+      - cmd: 'rm -rf {{.TG_API_REPO_DIR}}/build && mkdir {{.TG_API_REPO_DIR}}/build'
+
+      - echo "Running CMake configuration..."
+      - cmd: |
+          cd {{.TG_API_REPO_DIR}}/build && \
+          CXXFLAGS="-stdlib=libc++" \
+          CC={{.CLANG_CC}} \
+          CXX={{.CLANG_CXX}} \
+          cmake {{.CMAKE_ARGS}} ..
+
+      - echo "Starting heavy compilation (this will take time)..."
+      - cmd: 'cd {{.TG_API_REPO_DIR}}/build && cmake --build .'
+
+      - echo "Copying compiled binary to project root..."
+      - 'cp {{.TG_API_REPO_DIR}}/build/{{.TG_API_BIN_FILE}} {{.TG_API_BIN_FILE}}'
+
+      - echo "Build complete. Binary available at {{.TG_API_BIN_FILE}}"
+      - 'ls -l {{.TG_API_BIN_FILE}}'
+
+  tg-api:clean:
+    desc: Удалить артефакты сборки TDLib (папку build), оставив бинарник
+    cmds:
+      - echo "Cleaning up TDLib API build artifacts..."
+      - 'rm -rf {{.TG_API_REPO_DIR}}/build || true'
+
+  tg-api:clean:full:
+    desc: ВНИМАНИЕ!!! Полностью удалить все файлы TDLib (репозиторий и бинарник)
+    deps: [tg-api:clean]
+    cmds:
+      - echo "Nuking all TDLib API files (repository and binary)..."
+      - 'rm -rf {{.TG_API_REPO_DIR}}'
+      - 'rm -f {{.TG_API_BIN_FILE}}'
+
+  # ----------------------------------------------------------------------------
+  # GO BUILD & TEST
+  # ----------------------------------------------------------------------------
+  go:fmt:
+    desc: Отформатировать весь Go код
+    cmds:
+      - echo "Formatting Go files..."
+      - gofmt -w .
+
+  go:lint:
+    desc: Запустить линтер для проверки качества кода
+    deps: [go:tools, go:fmt]
+    cmds:
+      - echo "Running linter..."
+      - '{{.GOLANGCI_LINT}} run ./...'
+
+  go:test:
+    desc: Запустить unit-тесты (без интеграционных)
+    cmds:
+      - echo "Running fast tests..."
+      - go test -v -race -short ./...
+
+  go:test-cover:
+    desc: Запустить ВСЕ тесты и сгенерировать HTML-отчет о покрытии
+    cmds:
+      - echo "Running all tests with coverage..."
+      - go test -race -short -coverprofile=unit.cover ./...
+      - go test -race -tags=integration -coverprofile=integration.cover ./...
+      - echo "Merging coverage profiles..."
+      - 'echo "mode: set" > coverage.out'
+      - 'cat unit.cover integration.cover | grep -v "^mode:" >> coverage.out'
+      - echo "Generating HTML coverage report..."
+      - go tool cover -html=coverage.out -o coverage.html
+      - task: go:clean-test-artifacts
+      - cmd: 'echo "Coverage report successfully generated: open coverage.html"'
+
+  go:clean:
+    desc: Очистить все артефакты сборки, тестирования и TDLib бинарник
+    cmds:
+      - task: go:clean-test-artifacts
+      - echo "Cleaning up build artifacts..."
+      - 'rm -f *.test *.exe'
+      - 'rm -f {{.TG_API_BIN_FILE}}'
+
+  go:clean-test-artifacts:
+    cmds:
+      - 'rm -f coverage.html coverage.out unit.cover integration.cover'
+    silent: true
+
+  go:tools:
+    desc: Установить/обновить зависимости для утилит
+    cmds:
+      - echo "Syncing tools dependencies..."
+      - go mod tidy
